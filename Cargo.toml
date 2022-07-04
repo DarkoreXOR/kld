@@ -1,0 +1,18 @@
+[package]
+name = "kld"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+iced-x86 = "1.15.0"
+ar = "0.9.0"
+symbolic-common = "9.0.0"
+symbolic-demangle = "9.0.0"
+log = "0.4.14"
+log4rs = "1.0.0"
+
+[dependencies.object]
+version = "0.29.0"
+features = ["read_core", "write_core", "elf"]
