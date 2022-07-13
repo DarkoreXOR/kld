@@ -1,4 +1,4 @@
-use std::{collections::HashMap, rc::Weak, cell::RefCell, borrow::Borrow};
+use std::{collections::HashMap, rc::Weak, cell::RefCell};
 
 use super::file::{ElfSymbol, ElfSymbolType, ElfObjectFile};
 
@@ -30,13 +30,7 @@ impl Context {
     }
 
     pub fn add_local_resolved_symbol(&mut self, symbol: Weak<RefCell<ElfSymbol>>) -> Result<(), ()> {
-        let strong_symbol = symbol.upgrade();
-
-        if strong_symbol.is_none() {
-            return Err(());
-        }
-
-        let strong_symbol = strong_symbol.unwrap();
+        let strong_symbol = symbol.upgrade().ok_or(())?;
         let symbol_mut = &mut (*strong_symbol).borrow_mut();
         
         let symbol_name = symbol_mut.name.as_ref()//.take()
@@ -56,7 +50,6 @@ impl Context {
     }
 
     pub fn resolve_symbol(&mut self, symbol: Weak<RefCell<ElfSymbol>>) -> Result<(), ()> {
-
         let strong_symbol = symbol.upgrade();
 
         if strong_symbol.is_none() {
@@ -69,14 +62,15 @@ impl Context {
         let symbol_name = symbol_mut.name.as_ref()//.take()
             .expect("found global symbol without a name");
 
-        let symbol_entry = self.symbol_map.entry(symbol_name.to_owned())
+        let symbol_entry = self.symbol_map
+            .entry(symbol_name.to_owned())
             .or_insert(SymbolEntry::Unresolved);
 
-        if symbol_mut.stype == ElfSymbolType::Internal {
+        if symbol_mut.sym_type == ElfSymbolType::Internal {
             if let SymbolEntry::Resolved(_) = symbol_entry {
                 panic!("symbol defined multiple times");
 
-                // return Err(()); // multiple definition
+                // TODO: return Err(()); // multiple definition
             } else {
                 *symbol_entry = SymbolEntry::Resolved(symbol);
             }

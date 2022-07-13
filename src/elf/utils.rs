@@ -1,5 +1,4 @@
-use object::{Symbol, ObjectSymbol, Section, ObjectSection, SymbolFlags, SectionFlags, elf, Relocation, RelocationKind, SymbolSection, File, SectionIndex, Object};
-use crate::core::RelocationType;
+use object::{elf, Symbol, ObjectSymbol, Section, ObjectSection, SymbolFlags, SectionFlags, SymbolSection, File, Object};
 
 pub fn is_local_symbol(symbol: &Symbol) -> bool {
     if let SymbolFlags::Elf { st_info, .. } = symbol.flags() {
@@ -33,58 +32,9 @@ pub fn is_executable_section(section: &Section) -> bool {
     }
 }
 
-pub fn get_relocation_type(relocation: &Relocation) -> Option<RelocationType> {
-    match relocation.kind() {
-        RelocationKind::Absolute => Some(RelocationType::Absolute),
-        RelocationKind::Relative => Some(RelocationType::Relative),
-        // object::RelocationKind::Got => todo!(),
-        // object::RelocationKind::GotRelative => todo!(),
-        // object::RelocationKind::GotBaseRelative => todo!(),
-        // object::RelocationKind::GotBaseOffset => todo!(),
-        RelocationKind::PltRelative => Some(RelocationType::PltRelative),
-        // object::RelocationKind::ImageOffset => todo!(),
-        // object::RelocationKind::SectionOffset => todo!(),
-        // object::RelocationKind::SectionIndex => todo!(),
-        // object::RelocationKind::Elf(_) => todo!(),
-        // object::RelocationKind::MachO { value, relative } => todo!(),
-        // object::RelocationKind::Coff(_) => todo!(),
-        _ => None,
-    }
-}
-
-pub fn get_file_uid(
-    archive_filename: Option<&str>,
-    object_filename: &str,
-    index: usize
-) -> String {
-    let archive_name = archive_filename
-        .unwrap_or(".");
-
-    format!(
-        "{}/{}/{}",
-        archive_name,
-        object_filename,
-        index
-    )
-}
-
-// pub fn get_names<'a>(symbols: &'a Vec<Symbol>) -> Vec<&'a str> {
-//     let mut result = Vec::new();
-
-//     for symbol in symbols {
-//         if let Result::Ok(name) = symbol.name() {
-//             if name.len() > 0 {
-//                 result.push(name);
-//             }
-//         }
-//     }
-
-//     result
-// }
-
 pub fn get_symbol_name<'a>(symbol: &'a Symbol, object_file: Option<&File>) -> Option<String> {
     if let Ok(symbol_name) = symbol.name() {
-        if symbol_name.len() > 0 {
+        if !symbol_name.is_empty() {
             return Some(symbol_name.to_owned());
         }
     }
@@ -93,7 +43,7 @@ pub fn get_symbol_name<'a>(symbol: &'a Symbol, object_file: Option<&File>) -> Op
         if let SymbolSection::Section(section_index) = symbol.section() {
             if let Result::Ok(section) = object_file.section_by_index(section_index) {
                 if let Result::Ok(section_name) = section.name() {
-                    if section_name.len() > 0 {
+                    if !section_name.is_empty() {
                         return Some(section_name.to_owned());
                     }
                 }

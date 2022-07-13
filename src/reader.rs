@@ -25,14 +25,14 @@ pub fn read_files(
 
     for object_file in object_files {
         let result = read_object(object_file)
-            .expect(&format!("cannot read object fle: {}", object_file));
+            .unwrap_or_else(|_| panic!("cannot read object file: {}", object_file));
 
         objects.push(result);
     }
 
     for archive_file in archive_files {
         let result = read_archive(archive_file)
-            .expect(&format!("cannot read object fle: {}", archive_file));
+            .unwrap_or_else(|_| panic!("cannot read object fle: {}", archive_file));
 
         archives.push(result);
     }

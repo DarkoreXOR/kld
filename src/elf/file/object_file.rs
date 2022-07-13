@@ -1,9 +1,14 @@
-use std::{rc::{Rc, Weak}, cell::{RefCell}, collections::HashMap};
-
+use std::cell::RefCell;
+use std::rc::{Rc, Weak};
 use object::{File, Object, ObjectSymbol, ObjectSection, RelocationTarget, RelocationKind, Symbol, SectionIndex};
+use super::FileParser;
+use super::super::{context::Context, utils};
 
-use crate::elf::{context::Context, utils};
-use super::ParsableFile;
+struct ParsedSymbols {
+    all: Vec<Rc<RefCell<ElfSymbol>>>,
+    local: Vec<Rc<RefCell<ElfSymbol>>>,
+    global: Vec<Rc<RefCell<ElfSymbol>>>,
+}
 
 #[derive(Debug)]
 pub enum ElfRelocationKind {
@@ -52,7 +57,7 @@ pub struct ElfSymbol {
     /// Symbol linked section.
     pub section: Option<Weak<RefCell<ElfSection>>>,
     pub offset: usize,
-    pub stype: ElfSymbolType,
+    pub sym_type: ElfSymbolType,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -75,15 +80,13 @@ pub struct ElfObjectFile {
 
 impl ElfObjectFile {
     pub fn new(filename: String) -> Self {
-        let result = Self {
+        Self {
             inner: Rc::new(RefCell::new(ElfObjectFileInner {
                 filename,
                 sections: Vec::new(),
                 symbols: Vec::new(),
             }))
-        };
-
-        result
+        }
     }
 }
 
@@ -120,8 +123,8 @@ impl ElfObjectFile {
 
     fn parse_sections_relocations(
         object_file: &File,
-        symbols: &mut Vec<Rc<RefCell<ElfSymbol>>>,
-        sections: &mut Vec<Rc<RefCell<ElfSection>>>
+        symbols: &mut [Rc<RefCell<ElfSymbol>>],
+        sections: &mut [Rc<RefCell<ElfSection>>]
     ) {
         for (index, section) in object_file.sections().enumerate() {
             for (relocation_offset, relocation_data) in section.relocations() {
@@ -145,15 +148,8 @@ impl ElfObjectFile {
     fn parse_symbols(
         context: &mut Context,
         object_file: &File,
-        sections: &Vec<Rc<RefCell<ElfSection>>>
-    ) -> (
-        // all
-        Vec<Rc<RefCell<ElfSymbol>>>,
-        // local
-        Vec<Rc<RefCell<ElfSymbol>>>,
-        // global
-        Vec<Rc<RefCell<ElfSymbol>>>
-    ) {
+        sections: &[Rc<RefCell<ElfSection>>]
+    ) -> ParsedSymbols {
         let mut all_symbols = Vec::new();
         let mut local_symbols = Vec::new();
         let mut global_symbols = Vec::new();
@@ -167,7 +163,7 @@ impl ElfObjectFile {
                 name: Self::get_symbol_special_name(&symbol, context),
                 section: parent_section,
                 offset: symbol.address() as usize,
-                stype: if utils::is_external_symbol(&symbol) {
+                sym_type: if utils::is_external_symbol(&symbol) {
                     ElfSymbolType::External
                 } else {
                     ElfSymbolType::Internal
@@ -183,12 +179,16 @@ impl ElfObjectFile {
             all_symbols.push(elf_symbol);
         }
 
-        (all_symbols, local_symbols, global_symbols)
+        ParsedSymbols {
+            all: all_symbols,
+            local: local_symbols,
+            global: global_symbols,
+        }
     }
 
     fn get_parent_section(
         section_index: Option<SectionIndex>,
-        sections: &Vec<Rc<RefCell<ElfSection>>>
+        sections: &[Rc<RefCell<ElfSection>>]
     ) -> Option<Weak<RefCell<ElfSection>>> {
         if let Some(index) = section_index {
             if let Some(section_cell) = sections.get(index.0) {
@@ -201,8 +201,8 @@ impl ElfObjectFile {
 
     fn get_target_symbol(
         target: RelocationTarget,
-        symbols: &Vec<Rc<RefCell<ElfSymbol>>>,
-        sections: &Vec<Rc<RefCell<ElfSection>>>
+        symbols: &[Rc<RefCell<ElfSymbol>>],
+        sections: &[Rc<RefCell<ElfSection>>]
     ) -> ElfRelocationTarget {
         match target {
             RelocationTarget::Symbol(symbol_index) => {
@@ -259,19 +259,17 @@ impl ElfObjectFile {
     }
 }
 
-impl ParsableFile for ElfObjectFile {
-    fn parse(&mut self, buffer: Vec<u8>, context: &mut Context) -> Result<(), ()> {
-        let object_file = object::File::parse(buffer.as_slice())
-            .map_err(|_| ())?;
-
+impl FileParser for ElfObjectFile {
+    fn parse(&mut self, buffer: &[u8], context: &mut Context) -> Result<(), ()> {
+        let object_file = object::File::parse(buffer).map_err(|_| ())?;
         let sections = self.parse_sections_without_relocations(&object_file);
         
-        let mut sections = sections
+        let mut sections: Vec<_> = sections
             .into_iter()
             .map(|section| Rc::new(RefCell::new(section)))
             .collect();
 
-        let (mut all_symbols, local_symbols, global_symbols) = Self::parse_symbols(
+        let ParsedSymbols { all: mut all_symbols, local: local_symbols, global: global_symbols} = Self::parse_symbols(
             context,
             &object_file,
             &sections
@@ -286,12 +284,12 @@ impl ParsableFile for ElfObjectFile {
         inner.sections = sections;
         inner.symbols = all_symbols.clone();
 
-        for local_symbol in local_symbols.iter() {
-            drop(context.add_local_resolved_symbol(Rc::downgrade(&local_symbol)));
+        for ref local_symbol in local_symbols {
+            let _ = context.add_local_resolved_symbol(Rc::downgrade(local_symbol));
         }
 
-        for global_symbol in global_symbols {
-            context.resolve_symbol(Rc::downgrade(&global_symbol))?;
+        for ref global_symbol in global_symbols {
+            context.resolve_symbol(Rc::downgrade(global_symbol))?;
         }
 
         Result::Ok(())

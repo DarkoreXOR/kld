@@ -6,9 +6,7 @@ use log4rs::Config;
 use log::LevelFilter;
 
 pub fn initialize() {
-    match std::fs::remove_file("output.log") {
-        _ => {}
-    }
+    let _ = std::fs::remove_file("output.log");
 
     //let log_format = "{d(%Y-%m-%d %H:%M:%S)} [{l}] in {f}:{L} {{{t}}}\n{m}\n";
     //let log_format = "[{l}] in {f}:{L} {{{t}}}\n{m}\n";

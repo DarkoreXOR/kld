@@ -1,11 +1,11 @@
 mod logging;
-mod core;
 mod reader;
 mod elf;
 mod writer;
 mod kos_application;
 
-use crate::{elf::{context::{Context, SymbolEntry}, file::{ElfObjectFile, ParsableFile, ElfSectionKind}}};
+use crate::{elf::{context::{Context, SymbolEntry}, file::{ElfObjectFile, FileParser, ElfSectionKind}}};
+use core::panic;
 use std::{collections::{VecDeque, HashMap}, path::{Path, PathBuf}};
 use elf::file::{ElfRelocation, ElfRelocationKind};
 use kos_application::KosApplication;
@@ -37,8 +37,8 @@ fn read_options() -> Options {
                     options.library_paths.push(library_path_argument);
                 }
             }
-        } else if argument.starts_with("-l") {
-            let library = (&argument[2..]).trim();
+        } else if let Some(library) = argument.strip_prefix("-l") {
+            let library = library.trim();
             log::trace!("add library: {}", library);
             options.libraries.push(library.to_owned());
         } else if std::path::Path::new(&argument).exists() {
@@ -186,6 +186,10 @@ fn generate_symbol_map(
     data_tag_offset_map: &HashMap::<String, (usize, usize)>,
     data_base_addr: usize,
 ) {
+    use std::fmt::Write;
+    use symbolic_common::{Language, Name, NameMangling};
+    use symbolic_demangle::{Demangle, DemangleOptions};
+
     let mut string_builder = String::new();
 
     // code
@@ -195,34 +199,29 @@ fn generate_symbol_map(
         let end_address = begin_address + size;
         //let mangled_names = symbol_table.get_tag_names(*tag);
 
-        string_builder.push_str(&format!(
-            "[c] {begin_address:08X} - {end_address:08X} ({size}):\n",
+        writeln!(
+            &mut string_builder,
+            "[c] {begin_address:08X} - {end_address:08X} ({size}):",
             begin_address = begin_address,
             end_address = end_address - 1,
-            size = end_address - begin_address,
-        ));
+            size = end_address - begin_address
+        ).expect("cannot append string");
 
-        for mangled_name in [tag] {
-            use symbolic_common::{Language, Name, NameMangling};
-            use symbolic_demangle::{Demangle, DemangleOptions};
+        let mangled_name = tag;
 
-            let name = Name::new(
-                mangled_name,
-                NameMangling::Mangled,
-                Language::Rust
-            );
+        let name = Name::new(
+            mangled_name,
+            NameMangling::Mangled,
+            Language::Rust
+        );
 
-            let demangled_name = Demangle::try_demangle(
-                &name, 
-                DemangleOptions::complete()
-            );
+        let demangled_name = Demangle::try_demangle(
+            &name, 
+            DemangleOptions::complete()
+        );
 
-            string_builder.push_str(
-                &format!("- {} ({})\n", demangled_name, mangled_name)
-            );
-        }
-
-        string_builder.push_str("\n");
+        writeln!(&mut string_builder, "- {} ({})\n", demangled_name, mangled_name)
+            .expect("cannot append string");
     }
 
     // data
@@ -232,34 +231,29 @@ fn generate_symbol_map(
         let end_address = begin_address + size;
         //let mangled_names = symbol_table.get_tag_names(*tag);
 
-        string_builder.push_str(&format!(
-            "[d] {begin_address:08X} - {end_address:08X} ({size}):\n",
+        writeln!(
+            &mut string_builder,
+            "[d] {begin_address:08X} - {end_address:08X} ({size}):",
             begin_address = begin_address,
             end_address = end_address - 1,
-            size = end_address - begin_address,
-        ));
+            size = end_address - begin_address
+        ).expect("cannot append string");
 
-        for mangled_name in [tag] {
-            use symbolic_common::{Language, Name, NameMangling};
-            use symbolic_demangle::{Demangle, DemangleOptions};
+        let mangled_name = tag;
 
-            let name = Name::new(
-                mangled_name,
-                NameMangling::Mangled,
-                Language::Rust
-            );
+        let name = Name::new(
+            mangled_name,
+            NameMangling::Mangled,
+            Language::Rust
+        );
 
-            let demangled_name = Demangle::try_demangle(
-                &name, 
-                DemangleOptions::complete()
-            );
+        let demangled_name = Demangle::try_demangle(
+            &name, 
+            DemangleOptions::complete()
+        );
 
-            string_builder.push_str(
-                &format!("- {} ({})\n", demangled_name, mangled_name)
-            );
-        }
-
-        string_builder.push_str("\n");
+        writeln!(&mut string_builder, "- {} ({})\n", demangled_name, mangled_name)
+            .expect("cannot append string");
     }
 
     std::fs::write("map.txt", string_builder)
@@ -276,7 +270,7 @@ fn main() {
 
     let args_array_string = std::env::args()
         .skip(1)
-        .map(|arg| format!("\"{}\"", arg.replace("\\", "\\\\")))
+        .map(|arg| format!("\"{}\"", arg.replace('\\', "\\\\")))
         .collect::<Vec<String>>().join(", ");
 
     log::trace!("\"args\": [{}]", args_array_string);
@@ -297,14 +291,14 @@ fn main() {
     for raw_archive_file in files.archives {
         for raw_object_file in raw_archive_file.objects {
             let mut object_file = ElfObjectFile::new(raw_object_file.filename.to_owned());
-            object_file.parse(raw_object_file.data.to_owned(), &mut context).expect("cannot parse archive file");
+            object_file.parse(&raw_object_file.data, &mut context).expect("cannot parse archive file");
             context.objects.push(object_file);
         }
     }
 
     for raw_object_file in files.objects {
         let mut object_file = ElfObjectFile::new(raw_object_file.filename.to_owned());
-        object_file.parse(raw_object_file.data.to_owned(), &mut context).expect("cannot parse object file");
+        object_file.parse(&raw_object_file.data, &mut context).expect("cannot parse object file");
         context.objects.push(object_file);
     }
 
@@ -392,7 +386,7 @@ fn main() {
             let relocation_symbol_entry = context
                 .symbol_map
                 .get(relocation_symbol_name)
-                .expect(&format!("relocation target not found '{}'", relocation_symbol_name));
+                .unwrap_or_else(|| panic!("relocation target not found '{}'", relocation_symbol_name));
 
             queue.push_back((relocation_symbol_name.to_owned(), relocation_symbol_entry.clone()));
 
@@ -471,12 +465,12 @@ fn main() {
 
     log::trace!("### END ###");
 
-    assert!(false);
+    panic!("panic for debug purpose");
 }
 
 fn relocate(
     context: &Context,
-    buffer: &mut Vec<u8>,
+    buffer: &mut [u8],
     offset_map: &HashMap<String, (usize, usize)>,
     code_offset_map: &HashMap<String, (usize, usize)>,
     data_offset_map: &HashMap<String, (usize, usize)>,
@@ -488,7 +482,7 @@ fn relocate(
         let data_entry = context
             .symbol_map
             .get(uid)
-            .expect(&format!("undefined symbol with uid: {}", uid));
+            .unwrap_or_else(|| panic!("undefined symbol with uid: {}", uid));
 
         let data_symbol = match data_entry {
             SymbolEntry::Resolved(resolved_symbol) => {
@@ -547,7 +541,7 @@ fn relocate(
             let relocation_symbol_entry = context
                 .symbol_map
                 .get(relocation_symbol_name)
-                .expect(&format!("relocation target not found '{}'", relocation_symbol_name));
+                .unwrap_or_else(|| panic!("relocation target not found '{}'", relocation_symbol_name));
 
             let resolved_symbol = match relocation_symbol_entry {
                 SymbolEntry::Resolved(resolved_symbol) => resolved_symbol,
@@ -580,7 +574,7 @@ fn relocate(
                 ElfSectionKind::Code => {
                     relocate2(
                         relocation_entry,
-                        &relocation_symbol_name,
+                        relocation_symbol_name,
                         target_offset,
                         *offset,
                         buffer,
@@ -592,7 +586,7 @@ fn relocate(
                 ElfSectionKind::Data => {
                     relocate2(
                         relocation_entry,
-                        &relocation_symbol_name,
+                        relocation_symbol_name,
                         target_offset,
                         *offset,
                         buffer,
@@ -610,7 +604,7 @@ fn relocate2(
     relocation_target: &str,
     relocation_target_offset: usize,
     offset: usize,
-    buffer: &mut Vec<u8>,
+    buffer: &mut [u8],
     offset_map: &HashMap<String, (usize, usize)>,
     base_addr: usize,
 ) {
@@ -656,7 +650,7 @@ fn patch_abs_reloc(buffer: &mut [u8], offset: usize, size: usize, value: usize, 
         4 => {
             let current_value = if add_current_value {
                 u32::from_le_bytes([
-                    buffer[offset + 0],
+                    buffer[offset],
                     buffer[offset + 1],
                     buffer[offset + 2],
                     buffer[offset + 3],
